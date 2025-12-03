@@ -1,0 +1,5 @@
+{
+  "name": "ResuMate SaaS",
+  "description": "A multi-user SaaS platform powered by Gemini to tailor resumes and generate job application answers, synchronized with Google Sheets.",
+  "requestFramePermissions": []
+}
