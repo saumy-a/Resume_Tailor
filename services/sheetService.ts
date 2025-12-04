@@ -5,9 +5,9 @@ import { User, ResumeEntry, AnswerEntry } from "../types";
 // ============================================================================
 
 // HARDCODED SYSTEM URL - Automatically connects the DB
-// This matches the URL you provided.
-const SYSTEM_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwAlErHz9eB0DPLlX-mMXZ9Z6QBZNL9pyBuOnw16bI9c7ksoqyEkwhdHRE68QBZzyAx/exec";
-
+// Updated to the latest URL provided by the user.
+const SYSTEM_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzzbAh9jwMdrfQmUBEc1DXT4tVfoPgqWLKrnhOQv_FUMJaN1rMLEHKBMyr0Vxa02QpY/exec";
+                          
 const STORAGE_KEY_URL = 'resumate_script_url';
 
 export const getScriptUrl = () => {
@@ -97,8 +97,9 @@ export const loginUser = async (email: string, passwordHash: string): Promise<an
   return await postToSheet('login_user', { email, password_hash: passwordHash });
 };
 
-export const saveResume = async (resume: ResumeEntry): Promise<void> => {
-  await postToSheet('save_resume', resume);
+export const saveResume = async (resume: ResumeEntry, fileData?: { base64: string, mimeType: string, name: string }): Promise<any> => {
+  // Returns the response so we can check for upload errors
+  return await postToSheet('save_resume', { ...resume, fileData });
 };
 
 export const saveAnswer = async (answer: AnswerEntry): Promise<void> => {

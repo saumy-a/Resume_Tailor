@@ -1,12 +1,16 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { User, ResumeInput } from '../types';
+import { User, ResumeInput, ResumeEntry } from '../types';
 import { tailorResume, generateAnswers, extractJobDetails } from '../services/geminiService';
 import { saveResume, saveAnswer, getScriptUrl } from '../services/sheetService';
 
 interface DashboardProps {
   user: User;
 }
+
+// Google Apps Script has a payload limit (approx 5-6MB for postData).
+// We limit to 3MB to be safe including base64 overhead.
+const MAX_FILE_SIZE_BYTES = 3 * 1024 * 1024; // 3MB
 
 const Dashboard: React.FC<DashboardProps> = ({ user }) => {
   const [activeTab, setActiveTab] = useState<'resume' | 'answers'>('resume');
@@ -22,8 +26,10 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
   const [tailoredResume, setTailoredResume] = useState('');
   const [generatedAnswers, setGeneratedAnswers] = useState<Array<{question: string, answer: string}>>([]);
   
+  const [statusMessage, setStatusMessage] = useState<string>('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [permissionError, setPermissionError] = useState(false);
 
   const isSheetConnected = !!getScriptUrl();
 
@@ -163,6 +169,11 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
         setError('Please upload a valid PDF file.');
         return;
       }
+      if (file.size > MAX_FILE_SIZE_BYTES) {
+        setError('File size too large. Please upload a PDF smaller than 3MB.');
+        return;
+      }
+
       setError(null);
       const reader = new FileReader();
       reader.onload = (evt) => {
@@ -174,6 +185,14 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
       reader.onerror = () => setError("Failed to read file.");
       reader.readAsDataURL(file);
     }
+  };
+
+  const resetForm = () => {
+    setResumeFile(null);
+    setBaseResumeText('');
+    setJobDescription('');
+    setQuestions('');
+    // We don't reset tailoredResume so user can still see output
   };
 
   const handleAction = async () => {
@@ -189,7 +208,9 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
     }
 
     setError(null);
+    setPermissionError(false);
     setIsProcessing(true);
+    setStatusMessage(`Processing with ${user.model_choice}...`);
 
     const resumeInput: ResumeInput = inputType === 'file' && resumeFile 
       ? { type: 'file', content: resumeFile.base64, mimeType: 'application/pdf', fileName: resumeFile.name }
@@ -197,32 +218,66 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
 
     try {
       if (activeTab === 'resume') {
+        setStatusMessage("Analyzing Resume & JD...");
         const details = await extractJobDetails(jobDescription);
+        
+        setStatusMessage("Generating Tailored Resume...");
         const result = await tailorResume(resumeInput, jobDescription, user.model_choice);
         setTailoredResume(result);
 
-        // Store history (For file uploads, we save a placeholder string in DB for now as saving entire PDF base64 might hit cell limits)
-        const storedOriginalContent = inputType === 'file' 
-           ? `[PDF File Uploaded: ${resumeFile?.name}]` 
-           : baseResumeText;
-
         const jobId = `job_${Date.now()}`;
-        await saveResume({
+        
+        // Prepare payload
+        const resumePayload: ResumeEntry = {
           resume_id: `res_${Date.now()}`,
           user_id: user.user_id,
           job_id: jobId,
-          original_resume_content: storedOriginalContent,
+          // If file, we put a temporary placeholder; if text, we put the text
+          original_resume_link: inputType === 'file' ? `[Uploading ${resumeFile?.name}...]` : baseResumeText, 
           updated_resume_content: result,
           company_name: details.company,
           job_title: details.title,
           date: new Date().toISOString()
-        });
+        };
+
+        // Prepare File Data if PDF
+        const fileData = (inputType === 'file' && resumeFile) ? {
+          base64: resumeFile.base64,
+          mimeType: 'application/pdf',
+          name: resumeFile.name
+        } : undefined;
+
+        // Save and check response for errors (like permission issues)
+        if (fileData) {
+          setStatusMessage("Uploading PDF to Drive & Saving to Sheet...");
+        } else {
+          setStatusMessage("Saving to Database...");
+        }
+
+        const saveResponse = await saveResume(resumePayload, fileData);
+        
+        if (saveResponse && saveResponse.status === 'error' && saveResponse.message) {
+           console.error("Save Error:", saveResponse.message);
+           // Show a specific warning if it's the Drive Permission error
+           if (saveResponse.message.includes("You do not have permission") || saveResponse.message.includes("DriveApp")) {
+              setError("Google Drive Permission Error");
+              setPermissionError(true);
+           } else {
+              setError(`Saved with error: ${saveResponse.message}`);
+           }
+        } else {
+           // Success: Reset form inputs
+           if (inputType === 'file') setResumeFile(null);
+        }
+
       } else {
         const qList = questions.split('\n').filter(q => q.trim().length > 0);
+        setStatusMessage("Generating structured answers...");
         const results = await generateAnswers(qList, resumeInput, jobDescription, user.model_choice);
         setGeneratedAnswers(results);
 
         const jobId = `job_${Date.now()}`;
+        setStatusMessage("Saving answers...");
         for (const item of results) {
           await saveAnswer({
             answer_id: `ans_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
@@ -234,10 +289,13 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
           });
         }
       }
+
     } catch (e) {
       setError("Failed to process. Please try again.");
+      console.error(e);
     } finally {
       setIsProcessing(false);
+      setStatusMessage('');
     }
   };
 
@@ -257,6 +315,29 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
                 Your history won't be saved to Google Sheets. 
                 <Link to="/profile" className="underline ml-1 font-bold hover:text-orange-900">Connect Now</Link>
               </p>
+            </div>
+          </div>
+        )}
+
+        {/* Permission Error Banner */}
+        {permissionError && (
+          <div className="bg-red-50 border-l-4 border-red-500 p-4 shadow-sm animate-pulse">
+            <div className="flex">
+              <div className="flex-shrink-0">
+                <span className="material-symbols-outlined text-red-500">lock</span>
+              </div>
+              <div className="ml-3">
+                <h3 className="text-sm font-bold text-red-800">Drive Permission Missing</h3>
+                <div className="mt-2 text-sm text-red-700">
+                  <p className="mb-2">Your Google Script cannot create folders yet. You must:</p>
+                  <ol className="list-decimal list-inside space-y-1">
+                    <li>Open <strong>Google Apps Script</strong></li>
+                    <li>Run the <code>setup</code> function manually</li>
+                    <li><strong>Accept Permissions</strong> in the popup</li>
+                    <li className="font-bold">Deploy &gt; New Version (Crucial!)</li>
+                  </ol>
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -324,7 +405,8 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
                   </div>
                 </div>
               ) : (
-                <div className="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 border-dashed rounded-lg hover:bg-gray-50 transition-colors cursor-pointer relative">
+                <div className="mt-1">
+                  <div className="flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 border-dashed rounded-lg hover:bg-gray-50 transition-colors cursor-pointer relative">
                     <div className="space-y-1 text-center">
                       <span className="material-symbols-outlined text-4xl text-gray-400">upload_file</span>
                       <div className="flex text-sm text-gray-600 justify-center">
@@ -337,14 +419,21 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
                         </label>
                         <p className="pl-1">or drag and drop</p>
                       </div>
-                      <p className="text-xs text-gray-500">PDF up to 5MB</p>
-                      {resumeFile && (
+                      <p className="text-xs text-gray-500">PDF up to 3MB</p>
+                      {resumeFile ? (
                         <div className="flex items-center justify-center text-green-600 text-sm font-medium mt-2">
                           <span className="material-symbols-outlined text-sm mr-1">check_circle</span>
                           {resumeFile.name}
                         </div>
+                      ) : (
+                         <div className="h-6"></div> // spacer
                       )}
                     </div>
+                  </div>
+                  <p className="mt-2 text-xs text-gray-400 flex items-center">
+                    <span className="material-symbols-outlined text-sm mr-1">info</span>
+                    Requires Google Drive permissions in your Apps Script.
+                  </p>
                 </div>
               )}
             </div>
@@ -376,10 +465,10 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
               </div>
             )}
             
-            {error && (
-               <div className="p-3 bg-red-50 text-red-600 text-sm rounded-md flex items-center">
+            {error && !permissionError && (
+               <div className="p-3 bg-red-50 text-red-600 text-sm rounded-md flex items-center border border-red-200">
                   <span className="material-symbols-outlined text-lg mr-2">error</span>
-                  {error}
+                  <span className="flex-1">{error}</span>
                </div>
             )}
 
@@ -391,7 +480,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
                {isProcessing ? (
                  <>
                    <span className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent mr-2"></span>
-                   Processing with {user.model_choice}...
+                   {statusMessage || 'Processing...'}
                  </>
                ) : (
                  <>
@@ -464,7 +553,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
                       <div className="h-2 bg-slate-700 rounded w-1/4"></div>
                    </div>
                    <div className="mt-8 text-center text-indigo-400 text-xs tracking-widest uppercase">
-                      AI is thinking...
+                      {statusMessage || 'AI is thinking...'}
                    </div>
                 </div>
              )}

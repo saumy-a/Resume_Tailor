@@ -100,6 +100,34 @@ const Profile: React.FC<ProfileProps> = ({ user, setUser }) => {
            )}
         </div>
       </div>
+
+      {/* Troubleshooting Section */}
+      <div className="bg-white shadow sm:rounded-lg border-l-4 border-red-400 overflow-hidden">
+        <div className="px-4 py-5 sm:px-6 bg-red-50">
+          <h3 className="text-lg leading-6 font-bold text-red-800 flex items-center">
+            <span className="material-symbols-outlined mr-2">build</span>
+            Troubleshooting: DriveApp Permission Error
+          </h3>
+          <p className="mt-1 max-w-2xl text-sm text-red-700">
+            If you see <strong>[Upload Error: You do not have permission to call DriveApp.createFolder...]</strong>
+          </p>
+        </div>
+        <div className="border-t border-red-200 px-4 py-5 sm:px-6">
+            <p className="text-sm text-gray-700 mb-3">
+              Google Apps Script creates "ResuMate Uploads" folder in your Drive to store PDFs. You must grant this permission manually.
+            </p>
+            <ol className="list-decimal list-inside text-sm text-gray-600 space-y-2">
+              <li>Open your <a href="https://script.google.com" target="_blank" className="text-indigo-600 underline font-medium">Google Apps Script Project</a>.</li>
+              <li>Paste the code containing <code>DriveApp.createFolder("Temp")</code> inside <code>setup</code> (see user guide).</li>
+              <li>In the toolbar, select <code>setup</code> and click <strong>Run</strong>.</li>
+              <li><strong>Accept Permissions</strong> in the popup (Review -> Advanced -> Go to -> Allow).</li>
+              <li><strong>CRITICAL:</strong> Click <strong>Deploy</strong> &rarr; <strong>Manage Deployments</strong> &rarr; <strong>Edit</strong> &rarr; <strong>New Version</strong> &rarr; <strong>Deploy</strong>.</li>
+            </ol>
+            <p className="text-sm text-gray-500 mt-4 italic">
+              Without the "New Version" deployment step, your live app will continue using the old permissions (Snapshot).
+            </p>
+        </div>
+      </div>
     </div>
   );
 };

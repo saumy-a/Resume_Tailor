@@ -22,7 +22,7 @@ export interface ResumeEntry {
   resume_id: string;
   user_id: string;
   job_id: string;
-  original_resume_content: string;
+  original_resume_link: string; // Renamed from content to link to match DB
   updated_resume_content: string;
   company_name: string;
   job_title: string;
