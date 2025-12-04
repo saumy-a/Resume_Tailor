@@ -28,10 +28,10 @@ const Layout: React.FC<LayoutProps> = ({ user, setUser }) => {
       <header className="bg-white border-b border-gray-200 sticky top-0 z-20">
         <div className="container mx-auto px-6 py-4">
           <div className="flex justify-between items-center">
-            <div className="flex items-center space-x-2">
+            <Link to="/dashboard" className="flex items-center space-x-2 hover:opacity-80 transition-opacity">
                <span className="material-symbols-outlined text-indigo-500 text-3xl">description</span>
                <h1 className="text-2xl font-bold text-indigo-500 tracking-tight">ResuMate SaaS</h1>
-            </div>
+            </Link>
             
             <div className="flex items-center space-x-6">
               <div className="hidden md:flex flex-col items-end">

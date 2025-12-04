@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { User } from '../types';
+import { User, ResumeInput } from '../types';
 import { tailorResume, generateAnswers, extractJobDetails } from '../services/geminiService';
 import { saveResume, saveAnswer, getScriptUrl } from '../services/sheetService';
 
@@ -10,7 +10,12 @@ interface DashboardProps {
 
 const Dashboard: React.FC<DashboardProps> = ({ user }) => {
   const [activeTab, setActiveTab] = useState<'resume' | 'answers'>('resume');
-  const [baseResume, setBaseResume] = useState('');
+  
+  // Resume Input State
+  const [inputType, setInputType] = useState<'text' | 'file'>('text');
+  const [baseResumeText, setBaseResumeText] = useState('');
+  const [resumeFile, setResumeFile] = useState<{name: string, base64: string} | null>(null);
+
   const [jobDescription, setJobDescription] = useState('');
   const [questions, setQuestions] = useState('');
   
@@ -21,6 +26,112 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
   const [error, setError] = useState<string | null>(null);
 
   const isSheetConnected = !!getScriptUrl();
+
+  // Robust Markdown to HTML parser for PDF generation
+  const markdownToHtml = (markdown: string): string => {
+    const lines = markdown.split('\n');
+    let html = '';
+    let inList = false;
+
+    lines.forEach(line => {
+        const trimmed = line.trim();
+        // Check for list items
+        if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
+            if (!inList) {
+                html += '<ul style="padding-left: 20px; margin-bottom: 10px;">';
+                inList = true;
+            }
+            const content = trimmed.substring(2)
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                .replace(/\*(.*?)\*/g, '<em>$1</em>');
+            html += `<li style="margin-bottom: 4px;">${content}</li>`;
+        } else {
+            // Close list if we were in one
+            if (inList) {
+                html += '</ul>';
+                inList = false;
+            }
+            
+            // Process headers and paragraphs
+            if (trimmed.startsWith('# ')) {
+                html += `<h1 style="font-size: 24px; font-weight: bold; border-bottom: 2px solid #333; margin-top: 24px; margin-bottom: 12px; padding-bottom: 4px; color: #111;">${trimmed.substring(2)}</h1>`;
+            } else if (trimmed.startsWith('## ')) {
+                html += `<h2 style="font-size: 18px; font-weight: bold; margin-top: 18px; margin-bottom: 8px; color: #333; text-transform: uppercase; letter-spacing: 0.5px;">${trimmed.substring(3)}</h2>`;
+            } else if (trimmed.startsWith('### ')) {
+                html += `<h3 style="font-size: 16px; font-weight: bold; margin-top: 12px; margin-bottom: 6px; color: #444;">${trimmed.substring(4)}</h3>`;
+            } else if (trimmed.length > 0) {
+                 const content = trimmed
+                    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                    .replace(/\*(.*?)\*/g, '<em>$1</em>');
+                html += `<p style="margin-bottom: 8px; line-height: 1.5;">${content}</p>`;
+            }
+        }
+    });
+    
+    if (inList) html += '</ul>';
+    return html;
+  };
+
+  const handleExportPdf = () => {
+    if (activeTab === 'resume' && tailoredResume) {
+      const htmlContent = markdownToHtml(tailoredResume);
+      // Open a new window for printing
+      const printWindow = window.open('', '_blank', 'height=800,width=900');
+      
+      if (printWindow) {
+        printWindow.document.write(`
+          <!DOCTYPE html>
+          <html>
+            <head>
+              <title>Resume - ${user.name}</title>
+              <style>
+                body {
+                  font-family: 'Georgia', 'Times New Roman', serif;
+                  line-height: 1.5;
+                  color: #333;
+                  max-width: 800px;
+                  margin: 0 auto;
+                  padding: 40px;
+                  background: white;
+                }
+                h1, h2, h3 { color: #000; font-family: 'Arial', sans-serif; }
+                p { margin: 0 0 10px 0; }
+                ul { margin: 0 0 10px 0; }
+                li { margin-bottom: 2px; }
+                
+                @media print {
+                  body { 
+                    padding: 0; 
+                    max-width: 100%;
+                  }
+                  @page { 
+                    margin: 1.5cm; 
+                    size: auto;
+                  }
+                }
+              </style>
+            </head>
+            <body>
+              ${htmlContent}
+              <script>
+                // Wait for content to load then print
+                window.onload = function() { 
+                  setTimeout(function() {
+                    window.print();
+                    // window.close(); // Optional: close after print
+                  }, 500);
+                }
+              </script>
+            </body>
+          </html>
+        `);
+        printWindow.document.close(); // Necessary for IE >= 10
+        printWindow.focus(); // Necessary for IE >= 10
+      }
+    } else {
+      alert("Only resumes can be exported to PDF currently.");
+    }
+  };
 
   const handleDownload = () => {
     if (activeTab === 'resume' && tailoredResume) {
@@ -45,8 +156,30 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
     }
   };
 
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.type !== 'application/pdf') {
+        setError('Please upload a valid PDF file.');
+        return;
+      }
+      setError(null);
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+        const result = evt.target?.result as string;
+        // Extract base64 part (remove "data:application/pdf;base64,")
+        const base64 = result.split(',')[1];
+        setResumeFile({ name: file.name, base64: base64 });
+      };
+      reader.onerror = () => setError("Failed to read file.");
+      reader.readAsDataURL(file);
+    }
+  };
+
   const handleAction = async () => {
-    if (!baseResume || !jobDescription) {
+    // Validation
+    const hasResume = inputType === 'text' ? !!baseResumeText : !!resumeFile;
+    if (!hasResume || !jobDescription) {
       setError("Please provide both a resume and a job description.");
       return;
     }
@@ -58,18 +191,27 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
     setError(null);
     setIsProcessing(true);
 
+    const resumeInput: ResumeInput = inputType === 'file' && resumeFile 
+      ? { type: 'file', content: resumeFile.base64, mimeType: 'application/pdf', fileName: resumeFile.name }
+      : { type: 'text', content: baseResumeText };
+
     try {
       if (activeTab === 'resume') {
         const details = await extractJobDetails(jobDescription);
-        const result = await tailorResume(baseResume, jobDescription, user.model_choice);
+        const result = await tailorResume(resumeInput, jobDescription, user.model_choice);
         setTailoredResume(result);
+
+        // Store history (For file uploads, we save a placeholder string in DB for now as saving entire PDF base64 might hit cell limits)
+        const storedOriginalContent = inputType === 'file' 
+           ? `[PDF File Uploaded: ${resumeFile?.name}]` 
+           : baseResumeText;
 
         const jobId = `job_${Date.now()}`;
         await saveResume({
           resume_id: `res_${Date.now()}`,
           user_id: user.user_id,
           job_id: jobId,
-          original_resume_content: baseResume,
+          original_resume_content: storedOriginalContent,
           updated_resume_content: result,
           company_name: details.company,
           job_title: details.title,
@@ -77,7 +219,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
         });
       } else {
         const qList = questions.split('\n').filter(q => q.trim().length > 0);
-        const results = await generateAnswers(qList, baseResume, jobDescription, user.model_choice);
+        const results = await generateAnswers(qList, resumeInput, jobDescription, user.model_choice);
         setGeneratedAnswers(results);
 
         const jobId = `job_${Date.now()}`;
@@ -149,18 +291,62 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
 
           <div className="p-6 space-y-6">
             <div>
-              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Base Resume</label>
-              <div className="relative">
-                <textarea
-                  className="block w-full rounded-lg border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 text-sm p-3 min-h-[120px]"
-                  placeholder="Paste your full resume here..."
-                  value={baseResume}
-                  onChange={(e) => setBaseResume(e.target.value)}
-                />
-                <div className="absolute top-3 right-3 text-gray-400 pointer-events-none">
-                  <span className="material-symbols-outlined text-lg">person</span>
+              <div className="flex justify-between items-center mb-2">
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Base Resume</label>
+                
+                {/* Switcher Text/PDF */}
+                <div className="bg-gray-100 p-1 rounded-lg flex text-xs">
+                   <button 
+                     onClick={() => setInputType('text')}
+                     className={`px-3 py-1 rounded-md transition-all ${inputType === 'text' ? 'bg-white shadow text-indigo-600 font-medium' : 'text-gray-500 hover:text-gray-700'}`}
+                   >
+                     Text
+                   </button>
+                   <button 
+                     onClick={() => setInputType('file')}
+                     className={`px-3 py-1 rounded-md transition-all ${inputType === 'file' ? 'bg-white shadow text-indigo-600 font-medium' : 'text-gray-500 hover:text-gray-700'}`}
+                   >
+                     PDF Upload
+                   </button>
                 </div>
               </div>
+
+              {inputType === 'text' ? (
+                <div className="relative">
+                  <textarea
+                    className="block w-full rounded-lg border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 text-sm p-3 min-h-[120px]"
+                    placeholder="Paste your full resume here..."
+                    value={baseResumeText}
+                    onChange={(e) => setBaseResumeText(e.target.value)}
+                  />
+                  <div className="absolute top-3 right-3 text-gray-400 pointer-events-none">
+                    <span className="material-symbols-outlined text-lg">edit_note</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 border-dashed rounded-lg hover:bg-gray-50 transition-colors cursor-pointer relative">
+                    <div className="space-y-1 text-center">
+                      <span className="material-symbols-outlined text-4xl text-gray-400">upload_file</span>
+                      <div className="flex text-sm text-gray-600 justify-center">
+                        <label
+                          htmlFor="file-upload"
+                          className="relative cursor-pointer bg-white rounded-md font-medium text-indigo-600 hover:text-indigo-500 focus-within:outline-none"
+                        >
+                          <span>Upload a PDF</span>
+                          <input id="file-upload" name="file-upload" type="file" className="sr-only" accept=".pdf" onChange={handleFileChange} />
+                        </label>
+                        <p className="pl-1">or drag and drop</p>
+                      </div>
+                      <p className="text-xs text-gray-500">PDF up to 5MB</p>
+                      {resumeFile && (
+                        <div className="flex items-center justify-center text-green-600 text-sm font-medium mt-2">
+                          <span className="material-symbols-outlined text-sm mr-1">check_circle</span>
+                          {resumeFile.name}
+                        </div>
+                      )}
+                    </div>
+                </div>
+              )}
             </div>
 
             <div>
@@ -231,14 +417,25 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
             <div className="text-xs font-mono text-slate-400">
                {activeTab === 'resume' ? 'resume-output.md' : 'answers.txt'}
             </div>
-            <div>
+            <div className="flex space-x-3">
+               {(tailoredResume && activeTab === 'resume') && (
+                  <button 
+                    onClick={handleExportPdf}
+                    className="text-xs flex items-center text-red-400 hover:text-red-300 transition-colors"
+                    title="Export as PDF"
+                 >
+                   <span className="material-symbols-outlined text-sm mr-1">picture_as_pdf</span>
+                   PDF
+                 </button>
+               )}
                {(tailoredResume || generatedAnswers.length > 0) && (
                  <button 
                     onClick={handleDownload}
                     className="text-xs flex items-center text-indigo-400 hover:text-indigo-300 transition-colors"
+                    title={activeTab === 'resume' ? "Download as Markdown" : "Download as Text"}
                  >
                    <span className="material-symbols-outlined text-sm mr-1">download</span>
-                   Save
+                   Save {activeTab === 'resume' ? '.md' : '.txt'}
                  </button>
                )}
             </div>

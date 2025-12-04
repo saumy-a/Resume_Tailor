@@ -11,6 +11,13 @@ export interface User {
   created_at: string;
 }
 
+export interface ResumeInput {
+  type: 'text' | 'file';
+  content: string; // The text content OR the Base64 string of the file
+  mimeType?: string; // e.g., 'application/pdf'
+  fileName?: string;
+}
+
 export interface ResumeEntry {
   resume_id: string;
   user_id: string;

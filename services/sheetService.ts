@@ -4,9 +4,15 @@ import { User, ResumeEntry, AnswerEntry } from "../types";
 // CONFIGURATION
 // ============================================================================
 
+// HARDCODED SYSTEM URL - Automatically connects the DB
+// This matches the URL you provided.
+const SYSTEM_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwAlErHz9eB0DPLlX-mMXZ9Z6QBZNL9pyBuOnw16bI9c7ksoqyEkwhdHRE68QBZzyAx/exec";
+
 const STORAGE_KEY_URL = 'resumate_script_url';
 
 export const getScriptUrl = () => {
+  // Always prioritize the hardcoded system URL
+  if (SYSTEM_SCRIPT_URL) return SYSTEM_SCRIPT_URL;
   return localStorage.getItem(STORAGE_KEY_URL) || '';
 };
 
@@ -14,9 +20,12 @@ export const setScriptUrl = (url: string) => {
   localStorage.setItem(STORAGE_KEY_URL, url.trim());
 };
 
+export const isUsingSystemUrl = () => {
+  return !!SYSTEM_SCRIPT_URL;
+};
+
 /**
  * Sends a POST request to the Google Apps Script.
- * We use 'text/plain' as Content-Type to avoid CORS preflight issues with GAS.
  */
 async function postToSheet(action: string, payload: any) {
   const scriptUrl = getScriptUrl();
@@ -27,6 +36,7 @@ async function postToSheet(action: string, payload: any) {
   }
 
   try {
+    // We use text/plain to avoid CORS preflight issues with Google Apps Script
     const response = await fetch(scriptUrl, {
       method: 'POST',
       redirect: "follow",
@@ -36,18 +46,16 @@ async function postToSheet(action: string, payload: any) {
       body: JSON.stringify({ action, ...payload }),
     });
     
-    // Attempt to parse JSON, but handle if response is not JSON (some GAS errors return HTML)
     const text = await response.text();
     try {
       return JSON.parse(text);
     } catch (e) {
       console.warn("Received non-JSON response from Sheet:", text);
-      return { status: 'success' }; // Assume success if request didn't throw
+      return { status: 'error', message: 'Invalid server response' }; 
     }
 
   } catch (error) {
     console.error("Sheet API Network Error:", error);
-    // Fallback so app doesn't crash
     return mockLocalStorageFallback(action, payload);
   }
 }
@@ -71,7 +79,6 @@ async function getFromSheet(action: string, params: Record<string, string>) {
     return await response.json();
   } catch (error) {
     console.error("Sheet API Error:", error);
-    // Fallback so app doesn't crash
     return mockLocalStorageFallback('get_history', params);
   }
 }
@@ -80,8 +87,14 @@ async function getFromSheet(action: string, params: Record<string, string>) {
 // API METHODS
 // ============================================================================
 
-export const saveUser = async (user: User, passwordHash?: string): Promise<void> => {
-  await postToSheet('save_user', { ...user, password_hash: passwordHash || '' });
+export const saveUser = async (user: User, passwordHash?: string): Promise<any> => {
+  return await postToSheet('save_user', { ...user, password_hash: passwordHash || '' });
+};
+
+// Verifies user credentials against the Google Sheet
+export const loginUser = async (email: string, passwordHash: string): Promise<any> => {
+  // This matches the 'login_user' action in your Apps Script
+  return await postToSheet('login_user', { email, password_hash: passwordHash });
 };
 
 export const saveResume = async (resume: ResumeEntry): Promise<void> => {
@@ -102,7 +115,7 @@ export const getHistory = async (userId: string): Promise<{ resumes: ResumeEntry
 
 
 // ============================================================================
-// FALLBACK MOCK (Used if SCRIPT_URL is empty or Network Fails)
+// FALLBACK MOCK (Offline Mode)
 // ============================================================================
 const STORAGE_KEYS = {
   USERS: 'resumate_users',
@@ -111,27 +124,32 @@ const STORAGE_KEYS = {
 };
 
 async function mockLocalStorageFallback(action: string, data: any) {
-  // console.log(`[Offline Mode] Action: ${action}`, data);
   const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
   await delay(300);
 
   if (action === 'save_user') {
     const users = JSON.parse(localStorage.getItem(STORAGE_KEYS.USERS) || '[]');
-    // Avoid duplicates in local storage
     if (!users.find((u: any) => u.user_id === data.user_id)) {
       users.push(data);
       localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(users));
     }
+    return { status: 'success' };
   } 
+  // login_user mock
+  else if (action === 'login_user') {
+    return { status: 'error', message: 'Offline login not supported in fallback. Please use Cloud Mode.' };
+  }
   else if (action === 'save_resume') {
     const list = JSON.parse(localStorage.getItem(STORAGE_KEYS.RESUMES) || '[]');
     list.push(data);
     localStorage.setItem(STORAGE_KEYS.RESUMES, JSON.stringify(list));
+    return { status: 'success' };
   } 
   else if (action === 'save_answer') {
     const list = JSON.parse(localStorage.getItem(STORAGE_KEYS.ANSWERS) || '[]');
     list.push(data);
     localStorage.setItem(STORAGE_KEYS.ANSWERS, JSON.stringify(list));
+    return { status: 'success' };
   }
   else if (action === 'update_user_model') {
     const users = JSON.parse(localStorage.getItem(STORAGE_KEYS.USERS) || '[]');
@@ -140,6 +158,7 @@ async function mockLocalStorageFallback(action: string, data: any) {
       users[idx].model_choice = data.model_choice;
       localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(users));
     }
+    return { status: 'success' };
   }
   else if (action === 'get_history') {
     const allResumes = JSON.parse(localStorage.getItem(STORAGE_KEYS.RESUMES) || '[]');

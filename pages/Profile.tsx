@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { User, ModelType } from '../types';
-import { updateUserModel, getScriptUrl, setScriptUrl, saveUser } from '../services/sheetService';
+import { updateUserModel, isUsingSystemUrl } from '../services/sheetService';
 
 interface ProfileProps {
   user: User;
@@ -9,13 +9,7 @@ interface ProfileProps {
 
 const Profile: React.FC<ProfileProps> = ({ user, setUser }) => {
   const [selectedModel, setSelectedModel] = useState<ModelType>(user.model_choice);
-  const [scriptUrlInput, setScriptUrlInput] = useState('');
   const [savingModel, setSavingModel] = useState(false);
-  const [savingUrl, setSavingUrl] = useState(false);
-
-  useEffect(() => {
-    setScriptUrlInput(getScriptUrl());
-  }, []);
 
   const handleSaveModel = async () => {
     setSavingModel(true);
@@ -24,26 +18,7 @@ const Profile: React.FC<ProfileProps> = ({ user, setUser }) => {
     setSavingModel(false);
   };
 
-  const handleSaveUrl = async () => {
-    setSavingUrl(true);
-    setScriptUrl(scriptUrlInput);
-    
-    // CRITICAL FIX: Sync the user to the sheet immediately after connection
-    if (scriptUrlInput) {
-      try {
-        // We pass empty password hash here because we are just syncing the user info, 
-        // not resetting the password. The backend won't overwrite existing hash if not provided (logic dependent), 
-        // but for now we just ensure the user row exists.
-        await saveUser(user);
-        console.log("User synced to sheet successfully.");
-      } catch (e) {
-        console.error("Failed to sync user to sheet", e);
-      }
-    }
-
-    // Simulate a small delay for better UX
-    setTimeout(() => setSavingUrl(false), 500);
-  };
+  const isSystemConnected = isUsingSystemUrl();
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
@@ -90,45 +65,39 @@ const Profile: React.FC<ProfileProps> = ({ user, setUser }) => {
         </div>
       </div>
 
-      {/* Google Sheets Sync Settings */}
+      {/* Database Status */}
       <div className="bg-white shadow sm:rounded-lg">
         <div className="px-4 py-5 sm:px-6">
-          <h3 className="text-lg leading-6 font-medium text-gray-900">Google Sheets Sync</h3>
+          <h3 className="text-lg leading-6 font-medium text-gray-900">Database Connection</h3>
           <p className="mt-1 max-w-2xl text-sm text-gray-500">
-            Connect your personal Google Sheet database.
+            System status for cloud synchronization.
           </p>
         </div>
         <div className="border-t border-gray-200 px-4 py-5 sm:px-6">
-           <div className="space-y-4">
-              <div>
-                <label htmlFor="scriptUrl" className="block text-sm font-medium text-gray-700">
-                  Google Apps Script Web App URL
-                </label>
-                <div className="mt-1">
-                  <input
-                    type="text"
-                    name="scriptUrl"
-                    id="scriptUrl"
-                    value={scriptUrlInput}
-                    onChange={(e) => setScriptUrlInput(e.target.value)}
-                    className="shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md p-2 border"
-                    placeholder="https://script.google.com/macros/s/..."
-                  />
+           {isSystemConnected ? (
+              <div className="bg-green-50 border-l-4 border-green-400 p-4">
+                <div className="flex">
+                  <div className="flex-shrink-0">
+                    <span className="material-symbols-outlined text-green-400">check_circle</span>
+                  </div>
+                  <div className="ml-3">
+                    <p className="text-sm text-green-700">
+                      <strong>System Database Connected</strong>
+                    </p>
+                    <p className="text-sm text-green-600 mt-1">
+                       Your account, resumes, and answers are automatically synced to the central Google Sheet.
+                       You can log in from any device.
+                    </p>
+                  </div>
                 </div>
-                <p className="mt-2 text-xs text-gray-500">
-                  Deploy your Apps Script as a Web App (Access: "Anyone") and paste the URL here.
-                </p>
               </div>
-              <div className="text-right">
-                <button
-                  onClick={handleSaveUrl}
-                  disabled={savingUrl}
-                  className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
-                >
-                  {savingUrl ? 'Connecting...' : 'Save Connection'}
-                </button>
-              </div>
-           </div>
+           ) : (
+             <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4">
+               <p className="text-sm text-yellow-700">
+                 System database is not configured in code. Please check configuration.
+               </p>
+             </div>
+           )}
         </div>
       </div>
     </div>

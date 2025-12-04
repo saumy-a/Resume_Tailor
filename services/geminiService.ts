@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type, Schema } from "@google/genai";
-import { ModelType } from "../types";
+import { ModelType, ResumeInput } from "../types";
 
 // Initialize Gemini Client
 // The API key is obtained exclusively from process.env.API_KEY as per guidelines.
@@ -7,15 +7,20 @@ const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 /**
  * Tailors a resume based on the job description using the selected model.
+ * Supports both text paste and PDF file upload.
  */
 export const tailorResume = async (
-  resumeText: string,
+  resumeInput: ResumeInput,
   jobDescription: string,
   model: ModelType
 ): Promise<string> => {
-  const prompt = `
+  
+  const isFile = resumeInput.type === 'file';
+
+  // Construct the prompt. If file is attached, we reference it.
+  const textPrompt = `
     Role: You are an expert ATS (Applicant Tracking System) optimizer and career coach.
-    Task: Rewrite the provided resume to perfectly align with the job description. 
+    Task: Rewrite the resume to perfectly align with the job description.
     Constraint: Keep the facts true, but highlight relevant skills, keywords, and experiences from the JD.
     Output: Provide the full rewritten resume in clean Markdown format.
 
@@ -24,17 +29,27 @@ export const tailorResume = async (
     ${jobDescription}
 
     ---
-    ORIGINAL RESUME:
-    ${resumeText}
+    ${isFile ? 'RESUME: Use the attached PDF document as the resume source.' : `ORIGINAL RESUME:\n${resumeInput.content}`}
   `;
+
+  const parts: any[] = [{ text: textPrompt }];
+
+  if (isFile && resumeInput.mimeType) {
+    parts.unshift({
+      inlineData: {
+        mimeType: resumeInput.mimeType,
+        data: resumeInput.content
+      }
+    });
+  }
 
   try {
     const response = await ai.models.generateContent({
       model: model,
-      contents: prompt,
+      contents: { parts }, // Pass parts array
       config: {
         systemInstruction: "You are a professional resume writer.",
-        temperature: 0.3, // Lower temperature for more factual consistency
+        temperature: 0.3,
       }
     });
 
@@ -50,14 +65,15 @@ export const tailorResume = async (
  */
 export const generateAnswers = async (
   questions: string[],
-  resumeText: string,
+  resumeInput: ResumeInput,
   jobDescription: string,
   model: ModelType
 ): Promise<Array<{ question: string; answer: string }>> => {
   
   const questionsList = questions.map((q, i) => `${i + 1}. ${q}`).join('\n');
+  const isFile = resumeInput.type === 'file';
 
-  const prompt = `
+  const textPrompt = `
     Role: You are a professional job applicant.
     Task: Answer the following job application questions based strictly on my resume and the job context.
     Style: Professional, concise, and persuasive.
@@ -67,13 +83,23 @@ export const generateAnswers = async (
     ${jobDescription}
 
     ---
-    MY RESUME:
-    ${resumeText}
+    ${isFile ? 'MY RESUME: Use the attached PDF document.' : `MY RESUME:\n${resumeInput.content}`}
 
     ---
     QUESTIONS:
     ${questionsList}
   `;
+
+  const parts: any[] = [{ text: textPrompt }];
+
+  if (isFile && resumeInput.mimeType) {
+    parts.unshift({
+      inlineData: {
+        mimeType: resumeInput.mimeType,
+        data: resumeInput.content
+      }
+    });
+  }
 
   const responseSchema: Schema = {
     type: Type.ARRAY,
@@ -90,7 +116,7 @@ export const generateAnswers = async (
   try {
     const response = await ai.models.generateContent({
       model: model,
-      contents: prompt,
+      contents: { parts },
       config: {
         responseMimeType: "application/json",
         responseSchema: responseSchema,
