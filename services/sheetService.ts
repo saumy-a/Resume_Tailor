@@ -6,7 +6,7 @@ import { User, ResumeEntry, AnswerEntry } from "../types";
 
 // HARDCODED SYSTEM URL - Automatically connects the DB
 // Updated to the latest URL provided by the user.
-const SYSTEM_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzzbAh9jwMdrfQmUBEc1DXT4tVfoPgqWLKrnhOQv_FUMJaN1rMLEHKBMyr0Vxa02QpY/exec";
+const SYSTEM_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwfTBIqboyPBCSFtw6L4aLhxVSZYdl7Mzx3HkjKS2aJNWCJ8JYA8DqmGNq0gRiZuTyW/exec";
                           
 const STORAGE_KEY_URL = 'resumate_script_url';
 
